@@ -1,0 +1,162 @@
+name: Reusable RPM and Container Build
+
+on:
+  workflow_call:
+    inputs:
+      alma_version:
+        description: AlmaLinux major version for Docker build ARG
+        required: true
+        type: number
+      push_image:
+        description: Push image to container registry
+        required: true
+        type: boolean
+      run_registry_login:
+        description: Authenticate to container registry
+        required: true
+        type: boolean
+      image_tags:
+        description: Newline-separated image tags
+        required: false
+        type: string
+        default: ""
+      upload_rpm_artifact:
+        description: Upload binary RPM artifact
+        required: true
+        type: boolean
+      upload_srpm_artifact:
+        description: Upload source RPM artifact
+        required: false
+        type: boolean
+        default: false
+      artifact_retention_days:
+        description: Artifact retention window in days
+        required: false
+        type: number
+        default: 7
+      upload_release_assets:
+        description: Upload RPM and SRPM files to an existing GitHub release
+        required: true
+        type: boolean
+      release_tag:
+        description: Release tag used by gh release upload
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Free up disk space
+      # EPICS build requires large disk space on hosted runners.
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        docker system prune -af
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Set lowercase image name
+      run: echo "IMAGE_NAME_LOWER=$(echo '${{ github.repository_owner }}/epics-alma${{ inputs.alma_version }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+    - name: Log in to Container Registry
+      if: inputs.run_registry_login
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and optionally push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: ${{ inputs.push_image }}
+        tags: ${{ inputs.push_image && inputs.image_tags || format('epics-alma{0}:ci-local', inputs.alma_version) }}
+        platforms: linux/amd64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/image.tar
+        build-args: |
+          ALMA_VERSION=${{ inputs.alma_version }}
+
+    - name: Load image tar for extraction and smoke tests
+      run: |
+        docker load -i /tmp/image.tar
+
+    - name: Extract RPM from Docker image
+      run: |
+        image_id=$(docker images -q | head -n1)
+        container_id=$(docker create "$image_id")
+        mkdir -p rpms
+        docker cp "$container_id":/rpms/. ./rpms/
+        docker rm "$container_id"
+        ls -la ./rpms/
+
+    - name: Upload RPM as artifact
+      if: inputs.upload_rpm_artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: epics-bundle-rpm-el${{ inputs.alma_version }}
+        path: ./rpms/*.rpm
+        if-no-files-found: error
+        retention-days: ${{ inputs.artifact_retention_days }}
+
+    - name: Upload RPM to GitHub Release
+      if: inputs.upload_release_assets
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        if [ -z "${{ inputs.release_tag }}" ]; then
+          echo "release_tag must be set when upload_release_assets=true" >&2
+          exit 1
+        fi
+        gh release upload "${{ inputs.release_tag }}" ./rpms/*.rpm --clobber
+
+    - name: Extract SRPM from Docker image
+      if: inputs.upload_srpm_artifact
+      run: |
+        image_id=$(docker images -q | head -n1)
+        container_id=$(docker create "$image_id")
+        mkdir -p srpms
+        docker cp "$container_id":/srpms/. ./srpms/
+        docker rm "$container_id"
+        ls -la ./srpms/
+
+    - name: Upload SRPM as artifact
+      if: inputs.upload_srpm_artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: epics-bundle-srpm-el${{ inputs.alma_version }}
+        path: ./srpms/*.src.rpm
+        if-no-files-found: error
+        retention-days: ${{ inputs.artifact_retention_days }}
+
+    - name: Upload SRPM to GitHub Release
+      if: inputs.upload_release_assets && inputs.upload_srpm_artifact
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        if [ -z "${{ inputs.release_tag }}" ]; then
+          echo "release_tag must be set when upload_release_assets=true" >&2
+          exit 1
+        fi
+        gh release upload "${{ inputs.release_tag }}" ./srpms/*.src.rpm --clobber
+
+    - name: Smoke test image
+      run: |
+        image_id=$(docker images -q | head -n1)
+        docker run --rm "$image_id" caget -h
+        docker run --rm "$image_id" ls -la /usr/lib64/epics

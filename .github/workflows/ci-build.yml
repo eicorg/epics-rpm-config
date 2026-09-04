@@ -1,0 +1,47 @@
+name: CI Build RPM and Container
+
+on:
+  pull_request:
+    branches:
+      - eic-deploy
+  push:
+    branches:
+      - eic-deploy
+  workflow_dispatch:
+
+concurrency:
+  group: ci-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-and-manual-build:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-build-rpm-container.yml
+    secrets: inherit
+    with:
+      alma_version: 9
+      push_image: false
+      run_registry_login: false
+      upload_rpm_artifact: true
+      upload_srpm_artifact: false
+      artifact_retention_days: 1
+      upload_release_assets: false
+
+  eic-deploy-merge-build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/eic-deploy'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/reusable-build-rpm-container.yml
+    secrets: inherit
+    with:
+      alma_version: 9
+      push_image: true
+      run_registry_login: true
+      image_tags: ghcr.io/${{ github.repository_owner }}/epics-alma9:eic-deploy
+      upload_rpm_artifact: true
+      upload_srpm_artifact: false
+      artifact_retention_days: 7
+      upload_release_assets: false

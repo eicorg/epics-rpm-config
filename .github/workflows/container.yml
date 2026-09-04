@@ -1,8 +1,7 @@
-name: Build rpm and container
+name: Legacy Build rpm and container (manual only)
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
