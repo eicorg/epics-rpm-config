@@ -10,17 +10,20 @@ concurrency:
 
 jobs:
   publish-release:
+    strategy:
+      matrix:
+        alma_version: [8, 9, 10]
     permissions:
       contents: write
       packages: write
     uses: ./.github/workflows/reusable-build-rpm-container.yml
     secrets: inherit
     with:
-      alma_version: 9
+      alma_version: ${{ matrix.alma_version }}
       push_image: true
       run_registry_login: true
       image_tags: |
-        ghcr.io/${{ github.repository_owner }}/epics-alma9:${{ github.event.release.tag_name }}
+        ghcr.io/${{ github.repository_owner }}/epics-alma${{ matrix.alma_version }}:${{ github.event.release.tag_name }}
       upload_rpm_artifact: false
       upload_srpm_artifact: true
       upload_release_assets: true

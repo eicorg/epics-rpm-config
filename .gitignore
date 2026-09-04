@@ -6,3 +6,4 @@ RESULT/
 install/
 *.swp
 rpmbuildtree/
+notes.md
