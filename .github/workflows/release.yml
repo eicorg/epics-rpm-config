@@ -10,21 +10,91 @@ concurrency:
 
 jobs:
   publish-release:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         alma_version: [8, 9, 10]
     permissions:
       contents: write
       packages: write
-    uses: ./.github/workflows/reusable-build-rpm-container.yml
-    secrets: inherit
-    with:
-      alma_version: ${{ matrix.alma_version }}
-      push_image: true
-      run_registry_login: true
-      image_tags: |
-        ghcr.io/${{ github.repository_owner }}/epics-alma${{ matrix.alma_version }}:${{ github.event.release.tag_name }}
-      upload_rpm_artifact: false
-      upload_srpm_artifact: true
-      upload_release_assets: true
-      release_tag: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          docker system prune -af
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set lowercase image name
+        run: echo "IMAGE_NAME_LOWER=$(echo '${{ github.repository_owner }}/epics-alma${{ matrix.alma_version }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/epics-alma${{ matrix.alma_version }}:${{ github.event.release.tag_name }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/image.tar
+          build-args: |
+            ALMA_VERSION=${{ matrix.alma_version }}
+
+      - name: Load image tar for extraction and smoke tests
+        run: |
+          docker load -i /tmp/image.tar
+
+      - name: Extract RPM from Docker image
+        run: |
+          image_id=$(docker images -q | head -n1)
+          container_id=$(docker create "$image_id")
+          mkdir -p rpms
+          docker cp "$container_id":/rpms/. ./rpms/
+          docker rm "$container_id"
+          ls -la ./rpms/
+
+      - name: Upload RPM to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" ./rpms/*.rpm --clobber
+
+      - name: Extract SRPM from Docker image
+        run: |
+          image_id=$(docker images -q | head -n1)
+          container_id=$(docker create "$image_id")
+          mkdir -p srpms
+          docker cp "$container_id":/srpms/. ./srpms/
+          docker rm "$container_id"
+          ls -la ./srpms/
+
+      - name: Upload SRPM to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" ./srpms/*.src.rpm --clobber
+
+      - name: Smoke test image
+        run: |
+          docker run --rm ghcr.io/${{ github.repository_owner }}/epics-alma${{ matrix.alma_version }}:${{ github.event.release.tag_name }} caget -h
+          docker run --rm ghcr.io/${{ github.repository_owner }}/epics-alma${{ matrix.alma_version }}:${{ github.event.release.tag_name }} ls -la /usr/lib64/epics
