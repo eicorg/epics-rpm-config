@@ -63,7 +63,7 @@ VACTRL           master               $(SUPPORT)/vactrl                        v
 
 GIT_URL=https://github.com/ChannelFinder/
 
-RECCASTER        master               $(SUPPORT)/reccaster                     recsync                  YES              YES              YES
+RECCASTER        master               $(SUPPORT)/reccaster                     reccaster                YES              YES              YES
 
 GIT_URL=https://github.com/paulscherrerinstitute/
 
