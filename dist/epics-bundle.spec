@@ -1,6 +1,6 @@
 Name:           epics-bundle
 Version:        7.0.10_1.0.0
-Release:        2%{?dist}
+Release:        4%{?dist}
 Summary:        EPICS Base and Modules bundle
 
 License:        BSD-3-Clause
@@ -115,6 +115,9 @@ ln -s /usr/lib64/epics %{buildroot}/usr/lib/epics
 #/lib64/*
 
 %changelog
+* Thu Sep 17 2026 shroffk@bnl.gov - 7.0.10_1.0.0-4
+- Update reccaster repo location.
+
 * Fri Jan 23 2026 Jakub Wlodek <jwlodek@bnl.gov> - 7.0.10_1.0.0-2
 - Update to use devel versions of packages in 'Requires'.
 
